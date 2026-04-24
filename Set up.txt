@@ -1,0 +1,6 @@
+apiKey: "AIzaSyCxQVBR258_VHR5OGZZO64UugmaTx1vads",
+authDomain: "qc-attendance-77712.firebaseapp.com",
+projectId: "qc-attendance-77712",
+storageBucket: "qc-attendance-77712.firebasestorage.app",
+messagingSenderId: "1047572965496",
+appId: "1:1047572965496:web:0d7fe557ed2e593e34258d"

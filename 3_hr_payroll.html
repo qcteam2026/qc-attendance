@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QC Attendance — HR Payroll</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<style>
+:root{
+  --navy:#0d1b2a;--navy2:#1a2a3d;--navy3:#223249;
+  --gold:#f0a500;--green:#06d6a0;--red:#ef476f;--teal:#00b4d8;
+  --purple:#7b2d8b;--purple-lt:rgba(123,45,139,0.15);
+  --white:#e8f4fd;--grey:#7a94a8;--line:rgba(240,165,0,0.15);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--navy);color:var(--white);font-family:'Nunito',sans-serif;min-height:100vh;}
+body::before{content:'';position:fixed;inset:0;
+  background-image:linear-gradient(rgba(0,180,216,0.03) 1px,transparent 1px),
+  linear-gradient(90deg,rgba(0,180,216,0.03) 1px,transparent 1px);
+  background-size:48px 48px;pointer-events:none;}
+.page{position:relative;z-index:1;max-width:1100px;margin:0 auto;padding:20px 16px;}
+
+.hdr{display:flex;justify-content:space-between;align-items:center;
+  border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:24px;flex-wrap:wrap;gap:12px;}
+.logo{width:44px;height:44px;border-radius:10px;
+  background:linear-gradient(135deg,var(--gold),#ffc93c);
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Rajdhani',sans-serif;font-weight:700;font-size:18px;color:var(--navy);}
+.hdr-title h1{font-family:'Rajdhani',sans-serif;font-size:20px;font-weight:700;letter-spacing:1px;}
+.hdr-title p{font-size:11px;color:var(--grey);letter-spacing:2px;text-transform:uppercase;}
+
+/* Controls */
+.controls{
+  background:var(--navy2);border:1px solid var(--line);
+  border-radius:14px;padding:20px;margin-bottom:24px;
+}
+.ctrl-title{
+  font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;
+  letter-spacing:3px;color:var(--grey);text-transform:uppercase;margin-bottom:14px;
+}
+.ctrl-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;}
+.ctrl-group{display:flex;flex-direction:column;gap:4px;}
+.ctrl-label{font-size:11px;color:var(--grey);letter-spacing:1px;text-transform:uppercase;}
+.ctrl-input{
+  background:var(--navy3);border:1px solid var(--line);border-radius:8px;
+  padding:10px 14px;color:var(--white);font-family:'Nunito',sans-serif;font-size:13px;outline:none;}
+.ctrl-input:focus{border-color:var(--gold);}
+.btn{padding:10px 20px;border-radius:8px;border:none;
+  font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;
+  letter-spacing:1px;cursor:pointer;transition:all 0.2s;text-transform:uppercase;}
+.btn-calc{background:var(--gold);color:var(--navy);}
+.btn-calc:hover{filter:brightness(1.1);}
+.btn-export{background:var(--green);color:var(--navy);}
+.btn-export:hover{filter:brightness(1.1);}
+.btn-export:disabled{opacity:0.4;cursor:not-allowed;}
+
+/* Summary cards */
+.sum-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+  gap:10px;margin-bottom:24px;}
+.sum-card{background:var(--navy2);border:1px solid var(--line);border-radius:10px;
+  padding:14px;text-align:center;}
+.sum-n{font-family:'Rajdhani',sans-serif;font-size:28px;font-weight:700;line-height:1;}
+.sum-l{font-size:10px;color:var(--grey);letter-spacing:2px;text-transform:uppercase;margin-top:4px;}
+
+/* Payroll table */
+.tbl-wrap{background:var(--navy2);border:1px solid var(--line);
+  border-radius:12px;overflow:auto;margin-bottom:20px;}
+.tbl{width:100%;border-collapse:collapse;font-size:12px;min-width:800px;}
+.tbl th{background:var(--navy3);color:var(--grey);
+  font-family:'Rajdhani',sans-serif;font-size:10px;
+  letter-spacing:2px;text-transform:uppercase;
+  padding:12px 14px;text-align:left;border-bottom:1px solid var(--line);}
+.tbl th.right,.tbl td.right{text-align:right;}
+.tbl td{padding:11px 14px;border-bottom:1px solid rgba(240,165,0,0.05);}
+.tbl tr:last-child td{border-bottom:none;}
+.tbl tr:hover td{background:rgba(240,165,0,0.03);}
+.mono{font-family:'Share Tech Mono',monospace;font-size:12px;}
+.tag-late{background:rgba(239,71,111,0.15);color:var(--red);
+  padding:2px 6px;border-radius:4px;font-family:'Rajdhani',sans-serif;
+  font-size:10px;font-weight:700;letter-spacing:1px;}
+.tag-absent{background:rgba(239,71,111,0.2);color:var(--red);
+  padding:2px 8px;border-radius:4px;font-family:'Rajdhani',sans-serif;
+  font-size:10px;font-weight:700;}
+.tag-present{background:rgba(6,214,160,0.15);color:var(--green);
+  padding:2px 8px;border-radius:4px;font-family:'Rajdhani',sans-serif;
+  font-size:10px;font-weight:700;}
+.hours{color:var(--teal);font-family:'Share Tech Mono',monospace;}
+.overtime{color:var(--gold);font-family:'Share Tech Mono',monospace;}
+.empty{text-align:center;padding:40px;color:var(--grey);font-style:italic;}
+
+/* Setup */
+.setup-overlay{position:fixed;inset:0;background:rgba(13,27,42,0.97);
+  display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;}
+.setup-box{background:var(--navy2);border:1px solid var(--gold);
+  border-radius:16px;padding:28px;max-width:500px;width:100%;max-height:90vh;overflow-y:auto;}
+.setup-box h2{font-family:'Rajdhani',sans-serif;font-size:20px;color:var(--gold);
+  letter-spacing:2px;margin-bottom:8px;}
+.setup-box p{font-size:13px;color:var(--grey);margin-bottom:16px;line-height:1.6;}
+.s-input{width:100%;background:var(--navy3);border:1px solid var(--line);
+  border-radius:8px;padding:10px 14px;color:var(--white);
+  font-family:'Share Tech Mono',monospace;font-size:12px;outline:none;margin-bottom:8px;}
+.s-input:focus{border-color:var(--gold);}
+.btn-setup{width:100%;background:var(--gold);color:var(--navy);padding:12px;
+  border-radius:8px;border:none;font-family:'Rajdhani',sans-serif;
+  font-size:15px;font-weight:700;letter-spacing:1px;cursor:pointer;}
+</style>
+</head>
+<body>
+
+<div class="setup-overlay" id="setupOverlay">
+  <div class="setup-box">
+    <h2>HR PAYROLL SETUP</h2>
+    <p>Paste the same Firebase config to connect to the attendance database.</p>
+    <input class="s-input" id="c_apiKey"            placeholder="apiKey">
+    <input class="s-input" id="c_authDomain"        placeholder="authDomain">
+    <input class="s-input" id="c_projectId"         placeholder="projectId">
+    <input class="s-input" id="c_storageBucket"     placeholder="storageBucket">
+    <input class="s-input" id="c_messagingSenderId" placeholder="messagingSenderId">
+    <input class="s-input" id="c_appId"             placeholder="appId">
+
+    <div style="margin:14px 0 6px;">
+      <label style="font-size:11px;color:var(--grey);letter-spacing:1px;text-transform:uppercase;">
+        STANDARD DAILY WORK HOURS:
+      </label>
+    </div>
+    <input class="s-input" id="c_stdHours" placeholder="e.g. 8  (standard hours per day)">
+    <button class="btn-setup" onclick="saveConfig()">CONNECT</button>
+  </div>
+</div>
+
+<div class="page">
+  <div class="hdr">
+    <div style="display:flex;align-items:center;gap:14px;">
+      <div class="logo">HR</div>
+      <div class="hdr-title">
+        <h1>HR PAYROLL CALCULATOR</h1>
+        <p>Attendance Summary & Hours Export</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <div class="ctrl-title">Select Period</div>
+    <div class="ctrl-row">
+      <div class="ctrl-group">
+        <span class="ctrl-label">From Date</span>
+        <input type="date" class="ctrl-input" id="dateFrom">
+      </div>
+      <div class="ctrl-group">
+        <span class="ctrl-label">To Date</span>
+        <input type="date" class="ctrl-input" id="dateTo">
+      </div>
+      <div class="ctrl-group">
+        <span class="ctrl-label">Team Leader</span>
+        <select class="ctrl-input" id="leaderFilter">
+          <option value="">All Leaders</option>
+        </select>
+      </div>
+      <div class="ctrl-group">
+        <span class="ctrl-label">Site / Location</span>
+        <select class="ctrl-input" id="siteFilter">
+          <option value="">All Sites</option>
+        </select>
+      </div>
+      <div class="ctrl-group">
+        <span class="ctrl-label">Std Hours/Day</span>
+        <input type="number" class="ctrl-input" id="stdHours" value="8" min="1" max="24" style="width:90px;">
+      </div>
+      <div class="ctrl-group" style="justify-content:flex-end;">
+        <button class="btn btn-calc" onclick="calculate()">Calculate</button>
+      </div>
+      <div class="ctrl-group" style="justify-content:flex-end;">
+        <button class="btn btn-export" id="exportBtn" onclick="exportCSV()" disabled>⬇ Export CSV</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Summary -->
+  <div class="sum-row">
+    <div class="sum-card"><div class="sum-n" id="su0" style="color:var(--gold)">—</div><div class="sum-l">Total Staff</div></div>
+    <div class="sum-card"><div class="sum-n" id="su1" style="color:var(--green)">—</div><div class="sum-l">Days Worked (avg)</div></div>
+    <div class="sum-card"><div class="sum-n" id="su2" style="color:var(--teal)">—</div><div class="sum-l">Avg Total Hours</div></div>
+    <div class="sum-card"><div class="sum-n" id="su3" style="color:var(--gold)">—</div><div class="sum-l">Avg Overtime Hrs</div></div>
+    <div class="sum-card"><div class="sum-n" id="su4" style="color:var(--red)">—</div><div class="sum-l">Total Late Instances</div></div>
+    <div class="sum-card"><div class="sum-n" id="su5" style="color:var(--red)">—</div><div class="sum-l">Absent Days (total)</div></div>
+  </div>
+
+  <!-- Payroll table -->
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr>
+        <th>Code</th><th>Name</th><th>Dept</th><th>Team Leader</th>
+        <th class="right">Days Worked</th>
+        <th class="right">Total Hours</th>
+        <th class="right">Reg Hours</th>
+        <th class="right">Overtime Hrs</th>
+        <th class="right">Late Count</th>
+        <th class="right">Absent Days</th>
+        <th>Status</th>
+      </tr></thead>
+      <tbody id="payrollBody">
+        <tr><td colspan="11" class="empty">Select a date range and click Calculate</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const CFG_KEY='qchr_config';
+let db=null, payrollData=[], allStaff=[], stdHrs=8;
+
+function loadConfig(){try{return JSON.parse(localStorage.getItem(CFG_KEY));}catch(e){return null;}}
+function saveConfig(){
+  const fields=['apiKey','authDomain','projectId','storageBucket','messagingSenderId','appId'];
+  const cfg={};
+  for(const f of fields){
+    const val=document.getElementById('c_'+f).value.trim().replace(/^.*:\s*["']?|["']?\s*,?\s*$/g,'').trim();
+    if(!val){alert('Fill in all 6 Firebase fields.');return;}
+    cfg[f]=val;
+  }
+  const sh=parseFloat(document.getElementById('c_stdHours').value)||8;
+  cfg._stdHours=sh;
+  localStorage.setItem(CFG_KEY,JSON.stringify(cfg));
+  location.reload();
+}
+function initFirebase(cfg){
+  try{if(!firebase.apps.length) firebase.initializeApp(cfg); db=firebase.firestore(); return true;}
+  catch(e){return false;}
+}
+
+// Date helpers
+function todayStr(){return new Date().toISOString().slice(0,10);}
+function firstOfMonth(){const n=new Date(); return new Date(n.getFullYear(),n.getMonth(),1).toISOString().slice(0,10);}
+function daysBetween(a,b){
+  const da=new Date(a), db=new Date(b);
+  return Math.round((db-da)/86400000)+1;
+}
+
+async function calculate(){
+  if(!db){alert('Not connected.');return;}
+  const from=document.getElementById('dateFrom').value;
+  const to  =document.getElementById('dateTo').value;
+  const site=document.getElementById('siteFilter').value;
+  stdHrs=parseFloat(document.getElementById('stdHours').value)||8;
+
+  if(!from||!to){alert('Select both dates.');return;}
+  if(from>to){alert('From date must be before To date.');return;}
+
+  document.getElementById('payrollBody').innerHTML=
+    '<tr><td colspan="11" class="empty">Loading...</td></tr>';
+
+  // Fetch all records in range
+  let q=db.collection('attendance').where('date','>=',from).where('date','<=',to);
+  const snap=await q.get();
+  const records=snap.docs.map(d=>d.data());
+
+  // Filter by site
+  const leaderFilter=document.getElementById('leaderFilter').value;
+  let filtered=site?records.filter(r=>r.site===site):records;
+  if(leaderFilter) filtered=filtered.filter(r=>r.leader===leaderFilter);
+
+  // Group by staff
+  const byStaff={};
+  for(const s of allStaff){
+    byStaff[s.code]={leader:'',
+      code:s.code, name:s.name, dept:s.dept||'',
+      daysWorked:new Set(), totalHours:0, lateCount:0,
+    };
+  }
+
+  for(const r of filtered){
+    if(!byStaff[r.staffCode]) byStaff[r.staffCode]={leader:r.leader||'',
+      code:r.staffCode, name:r.staffName, dept:'',
+      daysWorked:new Set(), totalHours:0, lateCount:0,
+    };
+    const st=byStaff[r.staffCode];
+    if(r.leader&&!st.leader) st.leader=r.leader;
+    if(r.action==='IN') st.daysWorked.add(r.date);
+    if(r.action==='IN'&&r.late) st.lateCount++;
+    if(r.action==='OUT'&&r.workHours){
+      st.totalHours+=parseFloat(r.workHours)||0;
+    }
+  }
+
+  const totalDays=daysBetween(from,to);
+  // Exclude weekends roughly (5/7 ratio) — you can adjust
+  const workDays=Math.round(totalDays*(5/7));
+
+  payrollData=Object.values(byStaff).sort((a,b)=>a.name.localeCompare(b.name));
+
+  renderPayroll(payrollData, workDays);
+  updateSummary(payrollData, workDays);
+  document.getElementById('exportBtn').disabled=false;
+}
+
+function renderPayroll(data, workDays){
+  const body=document.getElementById('payrollBody');
+  if(!data.length){body.innerHTML='<tr><td colspan="11" class="empty">No data</td></tr>';return;}
+  body.innerHTML=data.map(s=>{
+    const days=s.daysWorked.size;
+    const absent=Math.max(0,workDays-days);
+    const regHrs=Math.min(s.totalHours, days*stdHrs);
+    const otHrs=Math.max(0,s.totalHours-days*stdHrs);
+    const pct=workDays>0?Math.round(days/workDays*100):0;
+    const status=absent===0&&s.lateCount===0?
+      '<span class="tag-present">PERFECT</span>':
+      absent>3?'<span class="tag-absent">HIGH ABSENT</span>':
+      s.lateCount>3?'<span class="tag-late">FREQUENT LATE</span>':'—';
+    return `<tr>
+      <td class="mono">${s.code}</td>
+      <td><strong>${s.name}</strong></td>
+      <td style="font-size:11px;color:var(--grey);">${s.dept}</td>
+      <td style="font-size:11px;color:var(--gold);">${s.leader||'—'}</td>
+      <td class="right"><strong>${days}</strong><span style="color:var(--grey);font-size:10px;"> /${workDays}</span></td>
+      <td class="right hours">${s.totalHours.toFixed(1)}</td>
+      <td class="right hours">${regHrs.toFixed(1)}</td>
+      <td class="right overtime">${otHrs>0?otHrs.toFixed(1):'—'}</td>
+      <td class="right ${s.lateCount>0?'style="color:var(--red)"':''}">${s.lateCount||'—'}</td>
+      <td class="right ${absent>0?'style="color:var(--red)"':''}">${absent||'—'}</td>
+      <td>${status}</td>
+    </tr>`;
+  }).join('');
+}
+
+function updateSummary(data,workDays){
+  const avgDays=(data.reduce((a,s)=>a+s.daysWorked.size,0)/data.length||0).toFixed(1);
+  const avgHrs =(data.reduce((a,s)=>a+s.totalHours,0)/data.length||0).toFixed(1);
+  const avgOT  =(data.reduce((a,s)=>a+Math.max(0,s.totalHours-s.daysWorked.size*stdHrs),0)/data.length||0).toFixed(1);
+  const totLate=data.reduce((a,s)=>a+s.lateCount,0);
+  const totAbs =data.reduce((a,s)=>a+Math.max(0,workDays-s.daysWorked.size),0);
+  document.getElementById('su0').textContent=data.length;
+  document.getElementById('su1').textContent=avgDays;
+  document.getElementById('su2').textContent=avgHrs+' h';
+  document.getElementById('su3').textContent=avgOT+' h';
+  document.getElementById('su4').textContent=totLate;
+  document.getElementById('su5').textContent=totAbs;
+}
+
+function exportCSV(){
+  if(!payrollData.length) return;
+  const from=document.getElementById('dateFrom').value;
+  const to  =document.getElementById('dateTo').value;
+  const workDays=Math.round(daysBetween(from,to)*(5/7));
+
+  const header=['Code','Name','Department','Team Leader','Days Worked','Total Hours',
+    'Regular Hours','Overtime Hours','Late Count','Absent Days'];
+  const rows=payrollData.map(s=>{
+    const days=s.daysWorked.size;
+    const absent=Math.max(0,workDays-days);
+    const regHrs=Math.min(s.totalHours,days*stdHrs).toFixed(1);
+    const otHrs=Math.max(0,s.totalHours-days*stdHrs).toFixed(1);
+    return [s.code,s.name,s.dept,s.leader||'',days,s.totalHours.toFixed(1),regHrs,otHrs,s.lateCount,absent];
+  });
+
+  const csv=[header,...rows].map(r=>r.join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`Payroll_${from}_to_${to}.csv`;
+  a.click();
+}
+
+async function loadSites(){
+  if(!db) return;
+  try{
+    const snap=await db.collection('attendance').limit(200).get();
+    const sites=[...new Set(snap.docs.map(d=>d.data().site).filter(Boolean))].sort();
+    const leaders=[...new Set(snap.docs.map(d=>d.data().leader).filter(Boolean))].sort();
+    const lsel=document.getElementById('leaderFilter');
+    leaders.forEach(l=>{const o=document.createElement('option');o.value=l;o.textContent=l;lsel.appendChild(o);});
+    const sel=document.getElementById('siteFilter');
+    sites.forEach(s=>{const o=document.createElement('option');o.value=s;o.textContent=s;sel.appendChild(o);});
+  }catch(e){}
+}
+async function loadStaff(){
+  if(!db) return;
+  try{
+    const snap=await db.collection('staff').orderBy('name').get();
+    allStaff=snap.docs.map(d=>({id:d.id,...d.data()}));
+  }catch(e){}
+}
+
+const cfg=loadConfig();
+if(cfg){
+  document.getElementById('setupOverlay').style.display='none';
+  stdHrs=cfg._stdHours||8;
+  document.getElementById('stdHours').value=stdHrs;
+  initFirebase(cfg);
+  document.getElementById('dateFrom').value=firstOfMonth();
+  document.getElementById('dateTo').value=todayStr();
+  loadSites();
+  loadStaff();
+}
+</script>
+</body>
+</html>

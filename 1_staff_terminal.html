@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>QC Attendance — Staff Terminal</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+<style>
+:root{
+  --navy:#0d1b2a; --navy2:#1a2a3d; --navy3:#223249;
+  --gold:#f0a500; --gold2:#ffc93c;
+  --green:#06d6a0; --red:#ef476f;
+  --teal:#00b4d8; --white:#e8f4fd; --grey:#7a94a8;
+  --line:rgba(240,165,0,0.15);
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{
+  background:var(--navy);color:var(--white);
+  font-family:'Nunito',sans-serif;
+  min-height:100vh;display:flex;flex-direction:column;
+  align-items:center;justify-content:flex-start;
+}
+body::before{
+  content:'';position:fixed;inset:0;
+  background-image:
+    linear-gradient(rgba(0,180,216,0.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,180,216,0.03) 1px,transparent 1px);
+  background-size:48px 48px;pointer-events:none;
+}
+.wrap{position:relative;z-index:1;width:100%;max-width:480px;padding:20px 16px;}
+
+/* Header */
+.top-bar{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;}
+.site-label{
+  background:var(--navy2);border:1px solid var(--line);
+  border-radius:8px;padding:8px 14px;
+  font-family:'Rajdhani',sans-serif;font-size:12px;
+  letter-spacing:2px;color:var(--gold);text-transform:uppercase;
+}
+.clock-box{text-align:right;}
+.c-time{font-family:'Share Tech Mono',monospace;font-size:28px;color:var(--gold);letter-spacing:2px;}
+.c-date{font-size:11px;color:var(--grey);letter-spacing:1px;}
+
+/* Big scan card */
+.scan-card{
+  background:var(--navy2);border:2px solid var(--line);
+  border-radius:20px;padding:28px 20px;margin-bottom:20px;
+  text-align:center;position:relative;overflow:hidden;
+  transition:border-color 0.3s,box-shadow 0.3s;
+}
+.scan-card.state-scanning{border-color:var(--gold);box-shadow:0 0 30px rgba(240,165,0,0.25);}
+.scan-card.state-success {border-color:var(--green);box-shadow:0 0 30px rgba(6,214,160,0.25);}
+.scan-card.state-error   {border-color:var(--red);  box-shadow:0 0 30px rgba(239,71,111,0.25);}
+
+.fp-ring{
+  width:110px;height:110px;border-radius:50%;
+  border:3px solid var(--line);margin:0 auto 18px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:52px;transition:border-color 0.3s;
+  position:relative;
+}
+.fp-ring::before{
+  content:'';position:absolute;inset:-8px;border-radius:50%;
+  border:1px solid var(--line);
+}
+.scan-card.state-scanning .fp-ring{border-color:var(--gold);animation:rpulse 1s ease-in-out infinite;}
+.scan-card.state-success  .fp-ring{border-color:var(--green);}
+.scan-card.state-error    .fp-ring{border-color:var(--red);}
+@keyframes rpulse{0%,100%{box-shadow:0 0 0 0 rgba(240,165,0,0.4)}50%{box-shadow:0 0 0 14px rgba(240,165,0,0)}}
+
+.scan-name{
+  font-family:'Rajdhani',sans-serif;font-size:28px;font-weight:700;
+  color:var(--white);margin-bottom:4px;min-height:36px;
+}
+.scan-msg{font-size:14px;color:var(--grey);min-height:20px;margin-bottom:20px;}
+
+.action-row{display:flex;gap:10px;justify-content:center;}
+.btn{
+  padding:13px 26px;border-radius:10px;border:none;
+  font-family:'Rajdhani',sans-serif;font-size:16px;font-weight:700;
+  letter-spacing:1px;cursor:pointer;transition:all 0.2s;text-transform:uppercase;
+}
+.btn-in {background:var(--green);color:var(--navy);}
+.btn-out{background:var(--red);  color:var(--white);}
+.btn-auto{background:var(--gold);color:var(--navy);flex:1;}
+.btn:hover{filter:brightness(1.1);transform:translateY(-2px);}
+.btn:active{transform:translateY(0);}
+
+/* Manual input */
+.manual-box{
+  background:var(--navy2);border:1px solid var(--line);
+  border-radius:14px;padding:18px;margin-bottom:20px;
+}
+.manual-label{
+  font-family:'Rajdhani',sans-serif;font-size:10px;
+  letter-spacing:3px;color:var(--grey);text-transform:uppercase;
+  margin-bottom:10px;
+}
+.manual-row{display:flex;gap:8px;}
+.id-input{
+  flex:1;background:var(--navy3);border:1px solid var(--line);
+  border-radius:8px;padding:12px 14px;
+  color:var(--white);font-family:'Share Tech Mono',monospace;font-size:16px;
+  outline:none;transition:border-color 0.2s;
+}
+.id-input:focus{border-color:var(--gold);}
+.btn-go{
+  background:var(--navy3);border:1px solid var(--gold);
+  color:var(--gold);padding:12px 18px;border-radius:8px;
+  font-family:'Rajdhani',sans-serif;font-size:15px;font-weight:700;
+  cursor:pointer;transition:all 0.2s;letter-spacing:1px;
+}
+.btn-go:hover{background:var(--gold);color:var(--navy);}
+
+/* Today's mini log */
+.mini-log{
+  background:var(--navy2);border:1px solid var(--line);
+  border-radius:14px;overflow:hidden;
+}
+.mini-log-hd{
+  background:var(--navy3);padding:10px 16px;
+  font-family:'Rajdhani',sans-serif;font-size:10px;
+  letter-spacing:3px;color:var(--grey);text-transform:uppercase;
+  display:flex;justify-content:space-between;align-items:center;
+}
+.log-count{
+  background:var(--gold);color:var(--navy);
+  border-radius:20px;padding:2px 8px;
+  font-size:11px;font-weight:700;
+}
+.log-entry{
+  display:flex;align-items:center;gap:12px;
+  padding:10px 16px;border-bottom:1px solid rgba(240,165,0,0.06);
+  font-size:13px;
+}
+.log-entry:last-child{border-bottom:none;}
+.log-time{font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--grey);min-width:60px;}
+.log-name{flex:1;font-weight:600;}
+.tag{font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;
+     letter-spacing:1px;padding:3px 8px;border-radius:4px;}
+.tag-in {background:rgba(6,214,160,0.15);color:var(--green);}
+.tag-out{background:rgba(239,71,111,0.15);color:var(--red);}
+.tag-late{background:rgba(239,71,111,0.15);color:var(--red);}
+.empty-mini{text-align:center;padding:20px;color:var(--grey);font-size:13px;font-style:italic;}
+
+/* Offline badge */
+.offline-badge{
+  position:fixed;top:12px;left:50%;transform:translateX(-50%);
+  background:var(--red);color:var(--white);
+  padding:6px 16px;border-radius:20px;
+  font-family:'Rajdhani',sans-serif;font-size:12px;font-weight:700;
+  letter-spacing:2px;display:none;z-index:999;
+}
+.offline-badge.show{display:block;}
+
+/* Setup overlay */
+.setup-overlay{
+  position:fixed;inset:0;background:rgba(13,27,42,0.97);
+  display:flex;align-items:center;justify-content:center;
+  z-index:100;padding:20px;
+}
+.setup-box{
+  background:var(--navy2);border:1px solid var(--gold);
+  border-radius:16px;padding:28px;max-width:480px;width:100%;
+}
+.setup-box h2{
+  font-family:'Rajdhani',sans-serif;font-size:20px;font-weight:700;
+  color:var(--gold);letter-spacing:2px;margin-bottom:6px;
+}
+.setup-box p{font-size:13px;color:var(--grey);margin-bottom:18px;line-height:1.6;}
+.setup-input{
+  width:100%;background:var(--navy3);border:1px solid var(--line);
+  border-radius:8px;padding:10px 14px;color:var(--white);
+  font-family:'Share Tech Mono',monospace;font-size:12px;
+  outline:none;margin-bottom:10px;
+}
+.setup-input:focus{border-color:var(--gold);}
+.btn-setup{
+  width:100%;background:var(--gold);color:var(--navy);
+  padding:12px;border-radius:8px;border:none;
+  font-family:'Rajdhani',sans-serif;font-size:15px;font-weight:700;
+  letter-spacing:1px;cursor:pointer;margin-top:6px;
+}
+.step-hint{
+  font-size:11px;color:var(--grey);line-height:1.8;
+  background:var(--navy3);border-radius:8px;padding:12px;
+  margin-bottom:14px;font-family:'Share Tech Mono',monospace;
+}
+
+#fpInput{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;}
+</style>
+</head>
+<body>
+
+<div class="offline-badge" id="offlineBadge">⚠ OFFLINE — Records will sync when online</div>
+
+<!-- Setup overlay (shown until Firebase configured) -->
+<div class="setup-overlay" id="setupOverlay">
+  <div class="setup-box">
+    <h2>FIRST-TIME SETUP</h2>
+    <p style="margin-bottom:10px;">Paste your <strong style="color:var(--gold)">entire Firebase config block</strong> into the box below, then fill in the Team Leader name.</p>
+
+    <div class="step-hint">
+      From Firebase Console → Project Settings → Your Apps → Web App<br>
+      Copy everything between the { } curly brackets
+    </div>
+
+    <textarea class="setup-input" id="cfg_paste" rows="9"
+      style="font-size:11px;line-height:1.7;resize:none;"
+      placeholder="Paste full config here, e.g.:&#10;apiKey: &quot;AIzaSy...&quot;,&#10;authDomain: &quot;xxx.firebaseapp.com&quot;,&#10;projectId: &quot;xxx&quot;,&#10;storageBucket: &quot;xxx.appspot.com&quot;,&#10;messagingSenderId: &quot;123456&quot;,&#10;appId: &quot;1:123:web:abc&quot;"></textarea>
+
+    <div style="margin:12px 0 6px;">
+      <label style="font-size:12px;color:var(--grey);letter-spacing:1px;text-transform:uppercase;">Team Leader Name (owner of this tablet):</label>
+    </div>
+    <input class="setup-input" id="cfg_site" placeholder="e.g. Tanaka Hiroshi" style="margin-bottom:4px;">
+
+    <div id="setupError" style="color:#ef476f;font-size:12px;min-height:18px;margin-bottom:8px;"></div>
+
+    <button class="btn-setup" onclick="saveConfig()">SAVE &amp; CONNECT</button>
+    <p style="font-size:11px;color:var(--grey);margin-top:10px;text-align:center;">
+      Config is saved on this tablet only. Other tablets need their own setup.
+    </p>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="top-bar">
+    <div class="site-label" id="siteLabel">Leader: —</div>
+    <div class="clock-box">
+      <div class="c-time" id="cTime">--:--:--</div>
+      <div class="c-date" id="cDate">---</div>
+    </div>
+  </div>
+
+
+  <!-- Daily location bar -->
+  <div class="manual-box" id="dailyLocBar" style="margin-bottom:16px;border-color:var(--gold);">
+    <div class="manual-label" style="color:var(--gold);">📍 Today's Work Location — set every morning</div>
+    <div class="manual-row">
+      <input class="id-input" id="dailyLoc" placeholder="e.g. Factory A / Client ABC"
+             style="font-size:13px;"
+             onkeydown="if(event.key==='Enter') setDailyLocation()">
+      <button class="btn-go" onclick="setDailyLocation()">SET</button>
+    </div>
+    <div id="currentLocDisplay" style="margin-top:8px;font-size:12px;color:var(--grey);"></div>
+  </div>
+
+  <!-- Scan card -->
+  <div class="scan-card" id="scanCard">
+    <div class="fp-ring" id="fpRing">🫆</div>
+    <div class="scan-name" id="scanName">Ready</div>
+    <div class="scan-msg"  id="scanMsg">Place finger on ZKTeco reader or enter ID below</div>
+    <div class="action-row">
+      <button class="btn btn-in"  onclick="triggerAction('IN')">Clock In</button>
+      <button class="btn btn-out" onclick="triggerAction('OUT')">Clock Out</button>
+    </div>
+  </div>
+
+  <!-- Manual input -->
+  <div class="manual-box">
+    <div class="manual-label">Manual Entry — type inspector ID + press Enter</div>
+    <div class="manual-row">
+      <input class="id-input" id="manualId" placeholder="e.g. QC-01"
+             onkeydown="if(event.key==='Enter') triggerAction('AUTO')">
+      <button class="btn-go" onclick="triggerAction('AUTO')">GO</button>
+    </div>
+  </div>
+
+  <!-- Today log -->
+  <div class="mini-log">
+    <div class="mini-log-hd">
+      <span>Today's Records — This Site</span>
+      <span class="log-count" id="logCount">0</span>
+    </div>
+    <div id="miniLogBody"><div class="empty-mini">No records yet today</div></div>
+  </div>
+</div>
+
+<input id="fpInput" type="text" autocomplete="off">
+
+<script>
+// ─── Config ───────────────────────────────────────────────────────────────
+const CFG_KEY   = 'qcatt_firebase_config';
+const CACHE_KEY = 'qcatt_offline_queue';
+const SITE_KEY  = 'qcatt_site';
+const START_H   = 8, LATE_M = 15;
+
+let db = null, site = '', pendingAction = null;
+
+function loadConfig() {
+  const raw = localStorage.getItem(CFG_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch(e) { return null; }
+}
+
+function saveConfig() {
+  const fields = ['apiKey','authDomain','projectId','storageBucket','messagingSenderId','appId'];
+  const cfg = {};
+  for (const f of fields) {
+    const val = document.getElementById('cfg_'+f).value.trim().replace(/^.*:\s*["']?|["']?\s*,?\s*$/g,'').trim();
+    if (!val) { alert('Please fill in all 6 Firebase config fields.'); return; }
+    cfg[f] = val;
+  }
+  const siteVal = document.getElementById('cfg_site').value.trim();
+  if (!siteVal) { alert('Please enter a site name for this tablet.'); return; }
+
+  localStorage.setItem(CFG_KEY,  JSON.stringify(cfg));
+  localStorage.setItem(SITE_KEY, siteVal);
+  location.reload();
+}
+
+function initFirebase(cfg) {
+  try {
+    if (!firebase.apps.length) firebase.initializeApp(cfg);
+    db = firebase.firestore();
+    db.enablePersistence().catch(()=>{});  // offline support
+    return true;
+  } catch(e) { console.error(e); return false; }
+}
+
+// ─── Clock ────────────────────────────────────────────────────────────────
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+function tsStr(d){   return d.toTimeString().slice(0,8); }
+function updateClock(){
+  const n = new Date();
+  document.getElementById('cTime').textContent = tsStr(n);
+  document.getElementById('cDate').textContent =
+    n.toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
+}
+
+// ─── ZKTeco HID ───────────────────────────────────────────────────────────
+let fpBuf='', fpTimer=null;
+function setupHID(){
+  const inp = document.getElementById('fpInput');
+  document.addEventListener('click', e=>{
+    const avoid=['manualId','cfg_apiKey','cfg_authDomain','cfg_projectId',
+                 'cfg_storageBucket','cfg_messagingSenderId','cfg_appId','cfg_site'];
+    if (!avoid.includes(e.target.id)) inp.focus();
+  });
+  inp.focus();
+  inp.addEventListener('keydown', e=>{
+    if(e.key==='Enter'){
+      const id=fpBuf.trim(); fpBuf=''; inp.value='';
+      clearTimeout(fpTimer);
+      if(id) processId(id,'AUTO');
+    } else if(e.key.length===1){
+      fpBuf+=e.key;
+      clearTimeout(fpTimer);
+      fpTimer=setTimeout(()=>{
+        const id=fpBuf.trim(); fpBuf=''; inp.value='';
+        if(id.length>=2) processId(id,'AUTO');
+      },600);
+      setCardState('scanning','Scanning...','Reading fingerprint...');
+    }
+  });
+}
+
+
+// ─── Daily location ────────────────────────────────────────────────────────
+const DAILY_LOC_KEY = 'qcatt_daily_location';
+
+function loadDailyLocation() {
+  const saved = JSON.parse(localStorage.getItem(DAILY_LOC_KEY) || 'null');
+  const today = todayStr();
+  if (saved && saved.date === today) {
+    document.getElementById('dailyLoc').value = saved.location;
+    document.getElementById('currentLocDisplay').textContent =
+      '✅ Today: ' + saved.location;
+    return saved.location;
+  }
+  document.getElementById('currentLocDisplay').textContent =
+    '⚠️ Not set yet — please enter today's location before scanning';
+  return null;
+}
+
+function setDailyLocation() {
+  const loc = document.getElementById('dailyLoc').value.trim();
+  if (!loc) { alert('Please enter today's work location.'); return; }
+  const entry = { date: todayStr(), location: loc };
+  localStorage.setItem(DAILY_LOC_KEY, JSON.stringify(entry));
+  document.getElementById('currentLocDisplay').textContent = '✅ Today: ' + loc;
+  setCardState('success', 'Location Set', loc + ' — ready to scan');
+  document.getElementById('fpInput').focus();
+}
+
+function getTodayLocation() {
+  const saved = JSON.parse(localStorage.getItem(DAILY_LOC_KEY) || 'null');
+  if (saved && saved.date === todayStr()) return saved.location;
+  return null;
+}
+
+// ─── Core action ─────────────────────────────────────────────────────────
+function triggerAction(type){
+  const id = document.getElementById('manualId').value.trim().toUpperCase();
+  if(!id){ setCardState('error','Enter ID','Please type an inspector ID first'); return; }
+  processId(id, type);
+}
+
+async function processId(fpId, type){
+  if(!db){ setCardState('error','Not Connected','Firebase not configured yet'); return; }
+
+  fpId = fpId.toUpperCase();
+  // Look up staff
+  let snap;
+  try {
+    snap = await db.collection('staff').where('code','==',fpId).limit(1).get();
+  } catch(e) {
+    // Offline — try local cache
+    const cached = getLocalStaff(fpId);
+    if(!cached){ setCardState('error','Unknown ID: '+fpId,'Not registered in the system'); return; }
+    await recordEntry(cached, type, true);
+    return;
+  }
+
+  if(snap.empty){ setCardState('error','Unknown: '+fpId,'ID not registered. See Manager.'); return; }
+  const member = {id:snap.docs[0].id, ...snap.docs[0].data()};
+  cacheStaff(member);
+  await recordEntry(member, type, false);
+}
+
+async function recordEntry(member, type, offline){
+  if (!getTodayLocation()) {
+    setCardState('error', 'Set Location First', 'Enter today\'s work location before scanning');
+    return;
+  }
+  const now   = new Date();
+  const timeNow = tsStr(now);
+  const today = todayStr();
+
+  // Determine IN or OUT
+  let action = type;
+  if(type==='AUTO'){
+    // Check last record for this staff today
+    let lastAction = await getLastAction(member.code, today, offline);
+    action = (!lastAction || lastAction==='OUT') ? 'IN' : 'OUT';
+  }
+
+  const late = action==='IN' && (() => {
+    const t=new Date(); t.setHours(START_H,LATE_M,0,0); return now>t;
+  })();
+
+  // Work hours calc for OUT
+  let workHours = '';
+  if(action==='OUT'){
+    const inTime = await getLastInTime(member.code, today, offline);
+    if(inTime){
+      const diff=(now - new Date(inTime))/3600000;
+      workHours = diff.toFixed(2)+' hrs';
+    }
+  }
+
+  const entry = {
+    staffId:   member.id,
+    staffCode: member.code,
+    staffName: member.name,
+    site:      getTodayLocation() || 'Unknown Site',
+    leader:    site,
+    date:      today,
+    time:      timeNow,
+    timestamp: now.toISOString(),
+    action:    action,
+    late:      late,
+    workHours: workHours,
+    synced:    !offline,
+  };
+
+  // Save
+  if(!offline && db){
+    try {
+      await db.collection('attendance').add(entry);
+      entry.synced=true;
+    } catch(e){
+      queueOffline(entry);
+    }
+  } else {
+    queueOffline(entry);
+  }
+
+  // Update UI
+  const statusTxt = action==='IN'
+    ? (late ? `⚠️ LATE — ${member.name}` : `✅ ${member.name}`)
+    : `🔴 ${member.name}`;
+  const subTxt = action==='IN'
+    ? `Clocked IN at ${timeNow}${late?' — LATE':''}${offline?' (offline, will sync)':''}`
+    : `Clocked OUT at ${timeNow}${workHours?' · '+workHours:''}${offline?' (offline, will sync)':''}`;
+
+  setCardState('success', statusTxt, subTxt);
+  document.getElementById('manualId').value='';
+  addToMiniLog(entry);
+  syncQueue();
+}
+
+// ─── Offline queue ────────────────────────────────────────────────────────
+function queueOffline(entry){
+  const q = getQueue();
+  q.push(entry);
+  localStorage.setItem(CACHE_KEY, JSON.stringify(q));
+}
+function getQueue(){
+  try{ return JSON.parse(localStorage.getItem(CACHE_KEY)||'[]'); }catch(e){return [];}
+}
+async function syncQueue(){
+  if(!db || !navigator.onLine) return;
+  const q = getQueue();
+  if(!q.length) return;
+  const remaining=[];
+  for(const entry of q){
+    try{
+      await db.collection('attendance').add({...entry,synced:true});
+    }catch(e){ remaining.push(entry); }
+  }
+  localStorage.setItem(CACHE_KEY, JSON.stringify(remaining));
+  if(remaining.length < q.length) console.log(`Synced ${q.length-remaining.length} offline records`);
+}
+
+// ─── Local staff cache (for offline lookup) ───────────────────────────────
+function cacheStaff(m){
+  const key='qcatt_staff_cache';
+  const c=JSON.parse(localStorage.getItem(key)||'{}');
+  c[m.code]=m; localStorage.setItem(key,JSON.stringify(c));
+}
+function getLocalStaff(code){
+  const c=JSON.parse(localStorage.getItem('qcatt_staff_cache')||'{}');
+  return c[code]||null;
+}
+
+// ─── Last action helpers ──────────────────────────────────────────────────
+async function getLastAction(code, date, offline){
+  // Check offline queue first
+  const q=getQueue().filter(e=>e.staffCode===code&&e.date===date);
+  const todayLocal=JSON.parse(localStorage.getItem('qcatt_today_log')||'[]')
+    .filter(e=>e.staffCode===code&&e.date===date);
+  const all=[...todayLocal,...q].sort((a,b)=>a.timestamp.localeCompare(b.timestamp));
+  if(all.length) return all[all.length-1].action;
+
+  if(offline||!db) return null;
+  try{
+    const snap=await db.collection('attendance')
+      .where('staffCode','==',code).where('date','==',date)
+      .orderBy('timestamp','desc').limit(1).get();
+    if(!snap.empty) return snap.docs[0].data().action;
+  }catch(e){}
+  return null;
+}
+async function getLastInTime(code, date, offline){
+  const todayLocal=JSON.parse(localStorage.getItem('qcatt_today_log')||'[]')
+    .filter(e=>e.staffCode===code&&e.date===date&&e.action==='IN');
+  const q=getQueue().filter(e=>e.staffCode===code&&e.date===date&&e.action==='IN');
+  const all=[...todayLocal,...q].sort((a,b)=>a.timestamp.localeCompare(b.timestamp));
+  if(all.length) return all[0].timestamp;
+  if(offline||!db) return null;
+  try{
+    const snap=await db.collection('attendance')
+      .where('staffCode','==',code).where('date','==',date).where('action','==','IN')
+      .orderBy('timestamp','asc').limit(1).get();
+    if(!snap.empty) return snap.docs[0].data().timestamp;
+  }catch(e){}
+  return null;
+}
+
+// ─── Mini log ─────────────────────────────────────────────────────────────
+let miniEntries=[];
+function addToMiniLog(e){
+  miniEntries.unshift(e);
+  const body=document.getElementById('miniLogBody');
+  const late=e.late?'<span class="tag tag-late">LATE</span>':'';
+  body.innerHTML=miniEntries.slice(0,15).map(en=>`
+    <div class="log-entry">
+      <span class="log-time">${en.time}</span>
+      <span class="log-name">${en.staffName}</span>
+      ${en.late?'<span class="tag tag-late">LATE</span>':''}
+      <span class="tag ${en.action==='IN'?'tag-in':'tag-out'}">${en.action}</span>
+    </div>`).join('');
+  document.getElementById('logCount').textContent=miniEntries.length;
+}
+
+// ─── Card state ───────────────────────────────────────────────────────────
+let resetTimer=null;
+function setCardState(state, name, msg){
+  const card=document.getElementById('scanCard');
+  card.className='scan-card state-'+state;
+  document.getElementById('scanName').textContent=name;
+  document.getElementById('scanMsg').textContent=msg;
+  clearTimeout(resetTimer);
+  resetTimer=setTimeout(()=>{
+    card.className='scan-card';
+    document.getElementById('scanName').textContent='Ready';
+    document.getElementById('scanMsg').textContent='Place finger on ZKTeco reader or enter ID below';
+  },4000);
+}
+
+// ─── Online/offline indicator ─────────────────────────────────────────────
+function updateOnline(){
+  document.getElementById('offlineBadge').classList.toggle('show',!navigator.onLine);
+  if(navigator.onLine) syncQueue();
+}
+window.addEventListener('online',  updateOnline);
+window.addEventListener('offline', updateOnline);
+
+// ─── Init ─────────────────────────────────────────────────────────────────
+const cfg = loadConfig();
+if(cfg){
+  document.getElementById('setupOverlay').style.display='none';
+  site = localStorage.getItem(SITE_KEY)||'Unknown Site';
+  document.getElementById('siteLabel').textContent='Leader: '+site;
+  initFirebase(cfg);
+  syncQueue();
+}
+
+setInterval(updateClock,1000); updateClock();
+loadDailyLocation();
+updateOnline();
+setupHID();
+</script>
+</body>
+</html>
