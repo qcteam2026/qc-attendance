@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{
   --navy:#0d1b2a;--navy2:#1a2a3d;--navy3:#223249;
@@ -173,7 +174,7 @@ body::before{content:'';position:fixed;inset:0;
         <button class="btn btn-calc" onclick="calculate()">Calculate</button>
       </div>
       <div class="ctrl-group" style="justify-content:flex-end;">
-        <button class="btn btn-export" id="exportBtn" onclick="exportCSV()" disabled>⬇ Export CSV</button>
+        <button class="btn btn-export" id="exportBtn" onclick="exportExcel()" disabled>⬇ Export Excel (.xlsx)</button>
       </div>
     </div>
   </div>
@@ -265,14 +266,24 @@ async function calculate(){
   // Group by staff
   const byStaff={};
   for(const s of allStaff){
-    byStaff[s.code]={leader:'',
+    byStaff[s.code]={leader:'',normalLeave:0,annualLeave:0,clLeave:0,missingScan:0,
       code:s.code, name:s.name, dept:s.dept||'',
       daysWorked:new Set(), totalHours:0, lateCount:0,
     };
   }
 
+  // Build status map for calculate period
+  const calcStatusSnap = await db.collection('daily_status')
+    .where('date','>=',from).where('date','<=',to).get();
+  const calcStatusMap={};
+  calcStatusSnap.docs.forEach(d=>{
+    const s=d.data();
+    if(!calcStatusMap[s.staffCode]) calcStatusMap[s.staffCode]={};
+    calcStatusMap[s.staffCode][s.date]=s.status;
+  });
+
   for(const r of filtered){
-    if(!byStaff[r.staffCode]) byStaff[r.staffCode]={leader:r.leader||'',
+    if(!byStaff[r.staffCode]) byStaff[r.staffCode]={leader:r.leader||'',normalLeave:0,annualLeave:0,clLeave:0,missingScan:0,
       code:r.staffCode, name:r.staffName, dept:'',
       daysWorked:new Set(), totalHours:0, lateCount:0,
     };
@@ -282,6 +293,17 @@ async function calculate(){
     if(r.action==='IN'&&r.late) st.lateCount++;
     if(r.action==='OUT'&&r.workHours){
       st.totalHours+=parseFloat(r.workHours)||0;
+    }
+  }
+
+  // Count leave types from status overrides
+  for(const [code, dates] of Object.entries(calcStatusMap)){
+    if(!byStaff[code]) continue;
+    for(const [date, status] of Object.entries(dates)){
+      if(status==='NORMAL_LEAVE') byStaff[code].normalLeave++;
+      else if(status==='ANNUAL_LEAVE') byStaff[code].annualLeave++;
+      else if(status==='CL_LEAVE') byStaff[code].clLeave++;
+      else if(status==='MISSING_SCAN') byStaff[code].missingScan++;
     }
   }
 
@@ -339,28 +361,266 @@ function updateSummary(data,workDays){
   document.getElementById('su5').textContent=totAbs;
 }
 
-function exportCSV(){
-  if(!payrollData.length) return;
-  const from=document.getElementById('dateFrom').value;
-  const to  =document.getElementById('dateTo').value;
-  const workDays=Math.round(daysBetween(from,to)*(5/7));
+async function exportExcel(){
+  if(!db) return;
+  const from = document.getElementById('dateFrom').value;
+  const to   = document.getElementById('dateTo').value;
+  if(!from||!to){ alert('Select date range first.'); return; }
 
-  const header=['Code','Name','Department','Team Leader','Days Worked','Total Hours',
-    'Regular Hours','Overtime Hours','Late Count','Absent Days'];
-  const rows=payrollData.map(s=>{
-    const days=s.daysWorked.size;
-    const absent=Math.max(0,workDays-days);
-    const regHrs=Math.min(s.totalHours,days*stdHrs).toFixed(1);
-    const otHrs=Math.max(0,s.totalHours-days*stdHrs).toFixed(1);
-    return [s.code,s.name,s.dept,s.leader||'',days,s.totalHours.toFixed(1),regHrs,otHrs,s.lateCount,absent];
-  });
+  const btn = document.getElementById('exportBtn');
+  btn.textContent = '⏳ Building...';
+  btn.disabled = true;
 
-  const csv=[header,...rows].map(r=>r.join(',')).join('\n');
-  const blob=new Blob([csv],{type:'text/csv'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download=`Payroll_${from}_to_${to}.csv`;
-  a.click();
+  try {
+    // Fetch ALL records in range
+    const snap = await db.collection('attendance')
+      .where('date','>=',from).where('date','<=',to)
+      .orderBy('date','asc').orderBy('timestamp','asc').get();
+    const records = snap.docs.map(d=>d.data());
+
+    // Fetch daily status overrides (absent/leave reasons)
+    const statusSnap = await db.collection('daily_status')
+      .where('date','>=',from).where('date','<=',to).get();
+    const statusMap = {}; // key: date_code
+    statusSnap.docs.forEach(d=>{
+      const s=d.data();
+      statusMap[s.date+'_'+s.staffCode] = s.status;
+    });
+
+    const STATUS_LABEL_MAP = {
+      'ABSENT':'Absent','NORMAL_LEAVE':'Normal Leave',
+      'ANNUAL_LEAVE':'Annual Leave','CL_LEAVE':'CL Leave',
+      'MISSING_SCAN':'Missing Scan'
+    };
+
+    const wb = XLSX.utils.book_new();
+    const workDays = Math.round(daysBetween(from,to)*(5/7));
+
+    // ── Get all unique dates ────────────────────────────────────────
+    const dates = [...new Set(records.map(r=>r.date))].sort();
+
+    // ── One sheet per day ──────────────────────────────────────────
+    for(const date of dates){
+      const dayRecs = records.filter(r=>r.date===date);
+
+      // Group by staff — get IN time, OUT time, hours, late
+      const staffMap = {};
+      for(const r of dayRecs){
+        if(!staffMap[r.staffCode]){
+          staffMap[r.staffCode]={
+            code:r.staffCode, name:r.staffName,
+            dept:r.staffName, leader:r.leader||'',
+            site:r.site||'', inTime:'', outTime:'',
+            workHours:'', late:false,
+          };
+        }
+        const s = staffMap[r.staffCode];
+        if(r.action==='IN'){
+          if(!s.inTime || r.time < s.inTime) s.inTime = r.time;
+          if(r.late) s.late = true;
+          s.leader = r.leader||s.leader;
+          s.site   = r.site||s.site;
+        }
+        if(r.action==='OUT'){
+          if(!s.outTime || r.time > s.outTime) s.outTime = r.time;
+          if(r.workHours) s.workHours = r.workHours;
+        }
+      }
+
+      // Also add absent staff (in allStaff but not in staffMap)
+      for(const s of allStaff){
+        if(!staffMap[s.code]){
+          staffMap[s.code]={
+            code:s.code, name:s.name, dept:s.dept||'',
+            leader:'', site:'', inTime:'', outTime:'',
+            workHours:'', late:false, absent:true,
+          };
+        }
+      }
+
+      const dayHeader = [
+        'Date','Code','Name','Department','Team Leader',
+        'Work Location','Clock In','Clock Out',
+        'Work Hours','Late','Status'
+      ];
+
+      const dayRows = Object.values(staffMap)
+        .sort((a,b)=>a.name.localeCompare(b.name))
+        .map(s=>([
+          date,
+          s.code, s.name, s.dept||'', s.leader,
+          s.site,
+          s.inTime||'', s.outTime||'',
+          s.workHours||'',
+          s.late ? 'LATE' : '',
+          (() => {
+            const key = date+'_'+s.code;
+            if(s.absent || (!s.inTime)) {
+              const override = statusMap[key];
+              return override ? (STATUS_LABEL_MAP[override]||override) : 'ABSENT';
+            }
+            return s.inTime&&s.outTime ? 'COMPLETE' : 'IN ONLY';
+          })(),
+        ]));
+
+      const ws = XLSX.utils.aoa_to_sheet([dayHeader, ...dayRows]);
+
+      // Column widths
+      ws['!cols'] = [
+        {wch:12},{wch:8},{wch:22},{wch:16},{wch:20},
+        {wch:22},{wch:10},{wch:10},{wch:12},{wch:8},{wch:10}
+      ];
+
+      // Style header row
+      const range = XLSX.utils.decode_range(ws['!ref']);
+      for(let C=range.s.c; C<=range.e.c; C++){
+        const addr = XLSX.utils.encode_cell({r:0,c:C});
+        if(!ws[addr]) continue;
+        ws[addr].s = {
+          fill:{fgColor:{rgb:'1B2A4A'}},
+          font:{bold:true,color:{rgb:'FFFFFF'},name:'Arial',sz:10},
+          alignment:{horizontal:'center',vertical:'center',wrapText:true},
+          border:{bottom:{style:'thin',color:{rgb:'F0A500'}}}
+        };
+      }
+
+      // Alternate row colors + highlight late/absent
+      for(let R=1; R<=dayRows.length; R++){
+        for(let C=0; C<=10; C++){
+          const addr = XLSX.utils.encode_cell({r:R,c:C});
+          if(!ws[addr]) ws[addr]={t:'s',v:''};
+          const rowData = dayRows[R-1];
+          const isAbsent = rowData[10]==='ABSENT';
+          const isLate   = rowData[9]==='LATE';
+          const bgColor  = isAbsent ? 'FADBD8' : isLate ? 'FEF9E7' : (R%2===0 ? 'F4F6F7' : 'FFFFFF');
+          ws[addr].s = {
+            fill:{fgColor:{rgb:bgColor}},
+            font:{name:'Arial',sz:9,
+              color:{rgb: isAbsent?'C0392B' : isLate?'BA4A00' : '1C2833'}},
+            alignment:{horizontal: C>=6?'center':'left', vertical:'center'},
+            border:{
+              bottom:{style:'thin',color:{rgb:'E0E0E0'}},
+              right:{style:'thin',color:{rgb:'E0E0E0'}}
+            }
+          };
+        }
+      }
+
+      // Freeze top row
+      ws['!freeze'] = {xSplit:0, ySplit:1};
+
+      // Sheet name = date
+      const sheetName = date.replace(/-/g,'-');
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    }
+
+    // ── Summary sheet ──────────────────────────────────────────────
+    const sumHeader = [
+      'Code','Name','Department','Team Leader',
+      'Days Worked','Working Days','Attendance %',
+      'Total Hours','Regular Hours','Overtime Hours',
+      'Late Count','Absent Days','Normal Leave','Annual Leave','CL Leave','Missing Scan','Grade'
+    ];
+
+    const sumRows = payrollData.map(s=>{
+      const days   = s.daysWorked.size;
+      const absent = Math.max(0,workDays-days);
+      const attPct = workDays>0 ? (days/workDays*100).toFixed(1)+'%' : '0%';
+      const regHrs = Math.min(s.totalHours,days*stdHrs).toFixed(1);
+      const otHrs  = Math.max(0,s.totalHours-days*stdHrs).toFixed(1);
+      const grade  = absent===0&&s.lateCount===0 ? 'A' :
+                     absent<=1&&s.lateCount<=2   ? 'B' :
+                     absent<=3                    ? 'C' : 'D';
+      return [
+        s.code, s.name, s.dept||'', s.leader||'',
+        days, workDays, attPct,
+        s.totalHours.toFixed(1), regHrs, otHrs,
+        s.lateCount, absent,
+        s.normalLeave||0, s.annualLeave||0, s.clLeave||0, s.missingScan||0,
+        grade
+      ];
+    });
+
+    // Add totals row
+    const totals = [
+      'TOTAL / AVG', '', '', '',
+      (payrollData.reduce((a,s)=>a+s.daysWorked.size,0)/payrollData.length||0).toFixed(1)+' avg',
+      workDays, '',
+      (payrollData.reduce((a,s)=>a+s.totalHours,0)/payrollData.length||0).toFixed(1)+' avg',
+      '','',
+      payrollData.reduce((a,s)=>a+s.lateCount,0)+' total',
+      payrollData.reduce((a,s)=>a+Math.max(0,workDays-s.daysWorked.size),0)+' total',
+      ''
+    ];
+
+    const sumWs = XLSX.utils.aoa_to_sheet([sumHeader, ...sumRows, totals]);
+    sumWs['!cols'] = [
+      {wch:8},{wch:22},{wch:16},{wch:20},
+      {wch:12},{wch:13},{wch:13},
+      {wch:13},{wch:14},{wch:15},
+      {wch:11},{wch:12},{wch:13},{wch:13},{wch:10},{wch:13},{wch:8}
+    ];
+
+    // Style summary header
+    const sumRange = XLSX.utils.decode_range(sumWs['!ref']);
+    for(let C=sumRange.s.c; C<=sumRange.e.c; C++){
+      const addr = XLSX.utils.encode_cell({r:0,c:C});
+      if(!sumWs[addr]) continue;
+      sumWs[addr].s = {
+        fill:{fgColor:{rgb:'0E6655'}},
+        font:{bold:true,color:{rgb:'FFFFFF'},name:'Arial',sz:10},
+        alignment:{horizontal:'center',vertical:'center',wrapText:true},
+        border:{bottom:{style:'medium',color:{rgb:'F0A500'}}}
+      };
+    }
+
+    // Style summary data rows
+    for(let R=1; R<=sumRows.length; R++){
+      for(let C=0; C<=12; C++){
+        const addr = XLSX.utils.encode_cell({r:R,c:C});
+        if(!sumWs[addr]) sumWs[addr]={t:'s',v:''};
+        const grade = sumRows[R-1][12];
+        const bgColor = grade==='A'?'D5F5E3':grade==='D'?'FADBD8':R%2===0?'F4F6F7':'FFFFFF';
+        sumWs[addr].s = {
+          fill:{fgColor:{rgb:bgColor}},
+          font:{name:'Arial',sz:9,color:{rgb:'1C2833'}},
+          alignment:{horizontal:C>=4?'center':'left',vertical:'center'},
+          border:{bottom:{style:'thin',color:{rgb:'E0E0E0'}}}
+        };
+      }
+    }
+
+    // Style totals row
+    const totR = sumRows.length+1;
+    for(let C=0; C<=12; C++){
+      const addr = XLSX.utils.encode_cell({r:totR,c:C});
+      if(!sumWs[addr]) sumWs[addr]={t:'s',v:''};
+      sumWs[addr].s = {
+        fill:{fgColor:{rgb:'1B2A4A'}},
+        font:{bold:true,color:{rgb:'F0A500'},name:'Arial',sz:10},
+        alignment:{horizontal:'center',vertical:'center'},
+        border:{top:{style:'medium',color:{rgb:'F0A500'}}}
+      };
+    }
+
+    sumWs['!freeze'] = {xSplit:0, ySplit:1};
+
+    // Insert Summary as FIRST sheet
+    XLSX.utils.book_append_sheet(wb, sumWs, '📊 Summary');
+
+    // Move Summary to front
+    wb.SheetNames = ['📊 Summary', ...wb.SheetNames.filter(n=>n!=='📊 Summary')];
+
+    // Save
+    XLSX.writeFile(wb, `Attendance_Report_${from}_to_${to}.xlsx`);
+
+  } catch(e) {
+    alert('Export error: ' + e.message);
+    console.error(e);
+  }
+
+  btn.textContent = '⬇ Export Excel (.xlsx)';
+  btn.disabled = false;
 }
 
 async function loadSites(){

@@ -250,6 +250,19 @@ Copy the 6 values below:
     <div class="section-hd">All Staff (<span id="staffCount">0</span>)</div>
     <div class="staff-grid" id="staffGrid"></div>
   </div>
+
+  <!-- Absent / Leave Status Panel -->
+  <div class="section-hd" id="absentSectionHd" style="display:none;">Mark Absent / Leave Status</div>
+  <div class="status-panel" id="absentPanel" style="display:none;">
+    <div class="status-panel-hd">
+      <h3>Staff Without Records — <span id="absentDate"></span></h3>
+      <span style="font-size:11px;color:var(--grey);">Mark reason for each staff with no clock-in today</span>
+    </div>
+    <div class="absent-grid" id="absentGrid">
+      <div class="no-absent">Loading...</div>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -295,6 +308,7 @@ async function loadData(){
     applyFilters();
     updateStats(date);
     populateSiteFilter();
+    loadAbsentPanel(date);
   }catch(e){
     document.getElementById('logBody').innerHTML=
       '<tr><td colspan="9" class="empty">Error loading data: '+e.message+'</td></tr>';
@@ -402,6 +416,120 @@ function switchTab(name,btn){
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('tab-'+name).classList.add('active');
+}
+
+
+// ── Status management ─────────────────────────────────────────────────────
+const STATUS_OPTIONS = [
+  {value:'',          label:'— Select Status —'},
+  {value:'ABSENT',    label:'Absent (No Excuse)'},
+  {value:'NORMAL_LEAVE', label:'Normal Leave'},
+  {value:'ANNUAL_LEAVE', label:'Annual Leave'},
+  {value:'CL_LEAVE',  label:'CL Leave'},
+  {value:'MISSING_SCAN', label:'Missing Scan'},
+];
+
+const STATUS_CLASS = {
+  'ABSENT':       'st-absent',
+  'NORMAL_LEAVE': 'st-normal-leave',
+  'ANNUAL_LEAVE': 'st-annual-leave',
+  'CL_LEAVE':     'st-cl-leave',
+  'MISSING_SCAN': 'st-missing-scan',
+};
+const STATUS_LABEL = {
+  'ABSENT':       'Absent',
+  'NORMAL_LEAVE': 'Normal Leave',
+  'ANNUAL_LEAVE': 'Annual Leave',
+  'CL_LEAVE':     'CL Leave',
+  'MISSING_SCAN': 'Missing Scan',
+};
+
+let savedStatuses = {}; // {staffCode: status}
+
+async function loadAbsentPanel(date) {
+  if(!db || !allStaff.length) return;
+
+  // Get all staff who have a record today
+  const presentCodes = new Set(allRecords.map(r=>r.staffCode));
+  const absentStaff  = allStaff.filter(s=>!presentCodes.has(s.code));
+
+  // Load existing statuses for this date
+  try {
+    const snap = await db.collection('daily_status')
+      .where('date','==',date).get();
+    savedStatuses = {};
+    snap.docs.forEach(d=>{
+      const data = d.data();
+      savedStatuses[data.staffCode] = {status:data.status, docId:d.id};
+    });
+  } catch(e) { savedStatuses = {}; }
+
+  const panel = document.getElementById('absentPanel');
+  const hd    = document.getElementById('absentSectionHd');
+  const grid  = document.getElementById('absentGrid');
+
+  document.getElementById('absentDate').textContent = date;
+
+  if(absentStaff.length === 0) {
+    panel.style.display = 'none';
+    hd.style.display    = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  hd.style.display    = 'flex';
+
+  grid.innerHTML = absentStaff.map(s => {
+    const saved   = savedStatuses[s.code];
+    const cls     = saved ? STATUS_CLASS[saved.status]||'' : '';
+    const lbl     = saved ? STATUS_LABEL[saved.status]||'' : '';
+    const options = STATUS_OPTIONS.map(o=>
+      `<option value="${o.value}" ${saved&&saved.status===o.value?'selected':''}>${o.label}</option>`
+    ).join('');
+    return `
+      <div class="absent-card" id="card-${s.code}">
+        <div class="absent-name">
+          <strong>${s.name}</strong>
+          <span>${s.code}${s.dept?' · '+s.dept:''}</span>
+        </div>
+        <select class="status-select" id="sel-${s.code}">${options}</select>
+        <button class="btn-mark" onclick="markStatus('${s.code}','${s.name}','${date}')">Save</button>
+        <span class="status-tag ${cls}" id="tag-${s.code}" style="${saved?'':'display:none'}">${lbl}</span>
+      </div>`;
+  }).join('');
+}
+
+async function markStatus(code, name, date) {
+  const sel    = document.getElementById('sel-'+code);
+  const status = sel.value;
+  if(!status) { alert('Please select a status first.'); return; }
+
+  try {
+    const existing = savedStatuses[code];
+    if(existing) {
+      await db.collection('daily_status').doc(existing.docId).update({status, updatedAt:new Date().toISOString()});
+    } else {
+      const ref = await db.collection('daily_status').add({
+        staffCode:code, staffName:name, date,
+        status, markedAt:new Date().toISOString()
+      });
+      savedStatuses[code] = {status, docId:ref.id};
+    }
+    savedStatuses[code].status = status;
+
+    // Update tag
+    const tag = document.getElementById('tag-'+code);
+    tag.className = 'status-tag ' + (STATUS_CLASS[status]||'');
+    tag.textContent = STATUS_LABEL[status]||status;
+    tag.style.display = 'inline-block';
+
+    // Flash card green
+    const card = document.getElementById('card-'+code);
+    card.style.borderColor = 'var(--green)';
+    setTimeout(()=>card.style.borderColor='',1500);
+  } catch(e) {
+    alert('Error saving: '+e.message);
+  }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────
