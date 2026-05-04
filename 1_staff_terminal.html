@@ -154,6 +154,22 @@ body::before{content:'';position:fixed;inset:0;
     </div>
   </div>
 
+
+  <!-- Scanner test box -->
+  <div class="manual-box" id="scanTestBox" style="border-color:var(--teal);margin-bottom:16px;">
+    <div class="m-label" style="color:var(--teal);">🔌 Scanner Test — tap below then scan finger</div>
+    <div class="m-row">
+      <input class="m-input" id="scanTest"
+             placeholder="Tap here, then place finger on scanner..."
+             style="font-size:13px;border-color:var(--teal);"
+             oninput="onScanTest(this.value)"
+             onkeydown="onScanTestKey(event)">
+    </div>
+    <div id="scanTestResult" style="margin-top:8px;font-size:12px;color:var(--grey);">
+      What appears here = what your scanner sends
+    </div>
+  </div>
+
   <!-- Manual -->
   <div class="manual-box">
     <div class="m-label">Manual ID Entry</div>
@@ -489,6 +505,38 @@ function updateOnline(){
 }
 window.addEventListener('online',  updateOnline);
 window.addEventListener('offline', updateOnline);
+
+
+// ── Scanner test ──────────────────────────────────────────────────────────
+let scanTestTimer = null;
+function onScanTest(val) {
+  clearTimeout(scanTestTimer);
+  document.getElementById('scanTestResult').textContent = 
+    'Receiving: "' + val + '" (' + val.length + ' chars)';
+  document.getElementById('scanTestResult').style.color = 'var(--teal)';
+  scanTestTimer = setTimeout(()=>{
+    if(val.trim().length >= 2){
+      document.getElementById('scanTestResult').textContent = 
+        '✅ Scanner output: "' + val.trim() + '" — use this as the FP ID in Staff Register';
+      document.getElementById('scanTestResult').style.color = 'var(--green)';
+      // Auto-fill manual ID
+      document.getElementById('manId').value = val.trim().toUpperCase();
+      document.getElementById('scanTest').value = '';
+    }
+  }, 800);
+}
+function onScanTestKey(e){
+  if(e.key==='Enter'){
+    const val = document.getElementById('scanTest').value.trim();
+    if(val){
+      document.getElementById('scanTestResult').textContent = 
+        '✅ Final output: "' + val + '"';
+      document.getElementById('scanTestResult').style.color = 'var(--green)';
+      document.getElementById('manId').value = val.toUpperCase();
+      document.getElementById('scanTest').value = '';
+    }
+  }
+}
 
 // ── Start ─────────────────────────────────────────────────────────────────
 initLeader();
